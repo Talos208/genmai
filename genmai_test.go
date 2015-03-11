@@ -542,40 +542,6 @@ func Test_Select(t *testing.T) {
 		}
 	}()
 
-	// SELECT * FROM test_model WHERE "id" IN (2, 3) (by slice);
-	func() {
-		db := newTestDB(t)
-		defer db.Close()
-		var actual []testModel
-		cond := []int32{2, 3}
-		if err := db.Select(&actual, db.Where("id").In(cond)); err != nil {
-			t.Fatal(err)
-		}
-		expected := []testModel{
-			{2, "test2", "addr2"}, {3, "test3", "addr3"},
-		}
-		if !reflect.DeepEqual(actual, expected) {
-			t.Errorf("Expect %v, but %v", expected, actual)
-		}
-	}()
-
-	// SELECT * FROM test_model WHERE "id" IN (2, 3) (by array);
-	func() {
-		db := newTestDB(t)
-		defer db.Close()
-		var actual []testModel
-		cond := [2]int32{2, 3}
-		if err := db.Select(&actual, db.Where("id").In(cond)); err != nil {
-			t.Fatal(err)
-		}
-		expected := []testModel{
-			{2, "test2", "addr2"}, {3, "test3", "addr3"},
-		}
-		if !reflect.DeepEqual(actual, expected) {
-			t.Errorf("Expect %v, but %v", expected, actual)
-		}
-	}()
-
 	// SELECT * FROM test_model WHERE "name" LIKE "%3";
 	func() {
 		db := newTestDB(t)
@@ -1004,7 +970,7 @@ func TestDB_Select_differentColumnName(t *testing.T) {
 		`INSERT INTO test_table VALUES (1)`,
 	} {
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(fmt.Errorf("%v: %s", err, query))
+			t.Fatal(err)
 		}
 	}
 	var results []TestTable
@@ -2448,7 +2414,7 @@ func TestDB_Delete(t *testing.T) {
 			`INSERT INTO test_table (id, name) VALUES (2, 'test2')`,
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(fmt.Errorf("%v: %s", err, query))
+				t.Fatal(err)
 			}
 		}
 		obj := &TestTable{Id: 1}
