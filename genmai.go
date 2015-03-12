@@ -1251,9 +1251,13 @@ func (c *Condition) build(numHolders int, inner bool) (queries []string, args []
 			queries = append(append(append(queries, "("), q...), ")")
 			args = append(args, a...)
 		case *JoinCondition:
+			ttn := e.tgtTableName
+			if len(ttn) == 0 {
+				ttn = c.tableName
+			}
 			queries = append(queries,
 				c.db.dialect.Quote(e.tableName), "ON",
-				ColumnName(c.db.dialect, c.tableName, e.left), e.op, ColumnName(c.db.dialect, e.tableName, e.right))
+				ColumnName(c.db.dialect, ttn, e.left), e.op, ColumnName(c.db.dialect, e.tableName, e.right))
 		case nil:
 			// ignore.
 		default:
@@ -1267,12 +1271,13 @@ func (c *Condition) build(numHolders int, inner bool) (queries []string, args []
 
 // JoinCondition represents a condition of "JOIN" query.
 type JoinCondition struct {
-	db        *DB
-	tableName string // A table name of 'to join'.
-	op        string // A operator of expression in "ON" clause.
-	left      string // A left column name of operator.
-	right     string // A right column name of operator.
-	clause    Clause // A type of join clause ("JOIN" or "LEFT JOIN")
+	db           *DB
+	tgtTableName string // A table name of 'to be joined'.
+	tableName    string // A table name of 'to join'.
+	op           string // A operator of expression in "ON" clause.
+	left         string // A left column name of operator.
+	right        string // A right column name of operator.
+	clause       Clause // A type of join clause ("JOIN" or "LEFT JOIN")
 }
 
 // Join adds table name to the JoinCondition of "JOIN".
@@ -1288,7 +1293,19 @@ func (jc *JoinCondition) LeftJoin(table interface{}) *JoinCondition {
 }
 
 // On adds "[LEFT] JOIN ... ON" clause to the Condition and returns it for method chain.
-func (jc *JoinCondition) On(lcolumn string, args ...string) *Condition {
+func (jc *JoinCondition) On(larg interface{}, args ...string) *Condition {
+	lcolumn := ""
+	switch rv := reflect.ValueOf(larg); {
+	case rv.Kind() == reflect.String:
+		lcolumn = rv.String()
+	case rv.Kind() == reflect.Ptr && reflect.Indirect(rv).Kind() == reflect.Struct:
+		jc.tgtTableName = jc.db.tableName(reflect.Indirect(rv).Type())
+		lcolumn = args[0]
+		args = args[1:]
+	default:
+		panic(fmt.Errorf("On: arguments 1 expect table or column name %v", larg))
+	}
+
 	switch len(args) {
 	case 0:
 		jc.left, jc.op, jc.right = lcolumn, "=", lcolumn
