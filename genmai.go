@@ -1120,30 +1120,6 @@ func (c *Condition) Or(cond interface{}, args ...interface{}) *Condition {
 
 // In adds "IN" clause to the Condition and returns it for method chain.
 func (c *Condition) In(args ...interface{}) *Condition {
-	if len(args) > 0 {
-		if k := reflect.TypeOf(args[0]).Kind(); k == reflect.Slice || k == reflect.Array {
-			v := reflect.ValueOf(args[0])
-			if len := v.Len(); len > 0 {
-
-				k := v.Index(0).Kind()
-				na := make([]interface{}, len)
-
-				for i := 0; i < len; i++ {
-					switch k {
-					case reflect.String:
-						na[i] = v.Index(i).String()
-					case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-						na[i] = v.Index(i).Int()
-					case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-						na[i] = v.Index(i).Uint()
-					case reflect.Float32, reflect.Float64:
-						na[i] = v.Index(i).Float()
-					}
-				}
-				return c.appendQuery(100, In, na)
-			}
-		}
-	}
 	return c.appendQuery(100, In, args)
 }
 
@@ -1258,6 +1234,7 @@ func (c *Condition) build(numHolders int, inner bool) (queries []string, args []
 			col := ColumnName(c.db.dialect, e.table, e.name)
 			queries = append(queries, col)
 		case []interface{}:
+			e = flatten(e)
 			holders := make([]string, len(e))
 			for i := 0; i < len(e); i++ {
 				holders[i] = c.db.dialect.PlaceHolder(numHolders)
