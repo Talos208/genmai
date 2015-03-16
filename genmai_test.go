@@ -43,6 +43,30 @@ type M2 struct {
 	Body string
 }
 
+type joinTestModel struct {
+	Id       int64
+	PersonId int64
+	AddrId   int64
+}
+
+type jTModelM2Rel struct {
+	Id          int64
+	TestModelId int64
+	M2Id        int64
+}
+
+type joinPerson struct {
+	Id   int64
+	Name string
+	Age  int64
+}
+
+type joinAddr struct {
+	Id     int64
+	Addr   string
+	Nation string
+}
+
 type TestModelForHook struct {
 	Id        int64 `db:"pk"`
 	Name      string
@@ -160,7 +184,7 @@ func newTestDB(t *testing.T) *DB {
 		`INSERT INTO m2 (id, body) VALUES (2, 'b2');`,
 	} {
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}
 	return db
@@ -185,7 +209,48 @@ func newDifferentTestDB(t *testing.T) *DB {
 		`INSERT INTO diff_table (id, name, addr) VALUES (9, 'diff_other2', 'diff_addr9');`,
 	} {
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
+		}
+	}
+	return db
+}
+
+func multiJoinTestDB(t *testing.T) *DB {
+	db, err := testDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{
+		`DROP TABLE IF EXISTS join_person`,
+		createTableString("join_person", "name text not null", "age integer not null"),
+		`INSERT INTO join_person (id, name, age) VALUES (1, 'Taro', 25);`,
+		`INSERT INTO join_person (id, name, age) VALUES (2, 'Tama', 2);`,
+		`INSERT INTO join_person (id, name, age) VALUES (3, 'Mike', 34);`,
+		`INSERT INTO join_person (id, name, age) VALUES (4, 'Hanako', 24);`,
+		`DROP TABLE IF EXISTS join_addr`,
+		createTableString("join_addr", "addr text not null", "nation varchar(255) not null"),
+		`INSERT INTO join_addr (id, addr, nation) VALUES (1, 'Tokyo', 'Japan');`,
+		`INSERT INTO join_addr (id, addr, nation) VALUES (2, 'Frisco', 'US');`,
+		`DROP TABLE IF EXISTS join_test_model`,
+		createTableString("join_test_model", "person_id integer not null", "addr_id integer not null"),
+		`INSERT INTO join_test_model (id, person_id, addr_id) VALUES (1, 1, 1);`,
+		`INSERT INTO join_test_model (id, person_id, addr_id) VALUES (2, 2, 1);`,
+		`INSERT INTO join_test_model (id, person_id, addr_id) VALUES (3, 3, 2);`,
+		`INSERT INTO join_test_model (id, person_id, addr_id) VALUES (4, 4, 1);`,
+		`DROP TABLE IF EXISTS m2`,
+		createTableString("m2", "body text not null"),
+		`INSERT INTO m2 (id, body) VALUES (1, 'a1');`,
+		`INSERT INTO m2 (id, body) VALUES (2, 'b2');`,
+		`DROP TABLE IF EXISTS j_t_model_m2_rel`,
+		createTableString("j_t_model_m2_rel", "j_t_model_id integer not null", "m2_id integer not null"),
+		`INSERT INTO j_t_model_m2_rel (id, j_t_model_id, m2_id) VALUES (1, 1, 1);`,
+		`INSERT INTO j_t_model_m2_rel (id, j_t_model_id, m2_id) VALUES (2, 2, 1);`,
+		`INSERT INTO j_t_model_m2_rel (id, j_t_model_id, m2_id) VALUES (3, 3, 1);`,
+		`INSERT INTO j_t_model_m2_rel (id, j_t_model_id, m2_id) VALUES (4, 1, 2);`,
+		`INSERT INTO j_t_model_m2_rel (id, j_t_model_id, m2_id) VALUES (5, 2, 2);`,
+	} {
+		if _, err := db.db.Exec(query); err != nil {
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}
 	return db
@@ -745,6 +810,44 @@ func Test_Select(t *testing.T) {
 		}
 	}()
 
+	// SELECT "join_test_model".* FROM "join_test_model" JOIN "join_addr" ON "join_test_model"."addr_id" = "join_addr"."id" JOIN "join_person" ON "join_test_model"."person_id" = "join_person"."id" WHERE "join_addr"."nation" = "Japan" AND "join_person"."age" > 20?;
+	func() {
+		db := multiJoinTestDB(t)
+		defer db.Close()
+		var actual []joinTestModel
+		t2 := &joinAddr{}
+		t3 := &joinPerson{}
+		if err := db.Select(&actual, db.Join(t2).On("addr_id", "=", "id"), db.Join(t3).On("person_id", "=", "id"), db.Where(t2, "nation", "=", "Japan").And(t3, "age", ">", 20)); err != nil {
+			t.Fatal(err)
+		}
+		expected := []joinTestModel{
+			{1, 1, 1},
+			{4, 4, 1},
+		}
+		if !reflect.DeepEqual(actual, expected) {
+			t.Errorf("Expect %v, but %v", expected, actual)
+		}
+	}()
+
+	// SELECT "join_test_model".* FROM "join_test_model" JOIN "j_t_model_m2_rel" ON "join_test_model"."id" = "j_t_model_m2_rel"."j_t_model_id" JOIN "m2" ON "j_t_model_m2_rel"."m2_id" = "m2"."id" WHERE "m2"."id" = 2;
+	func() {
+		db := multiJoinTestDB(t)
+		defer db.Close()
+		var actual []joinTestModel
+		t2 := &M2{}
+		tr := &jTModelM2Rel{}
+		if err := db.Select(&actual, db.Join(tr).On("id", "=", "j_t_model_id"), db.Join(t2).On(tr, "m2_id", "=", "id"), db.Where(t2, "id", "=", 2)); err != nil {
+			t.Fatal(err)
+		}
+		expected := []joinTestModel{
+			{1, 1, 1},
+			{2, 2, 1},
+		}
+		if !reflect.DeepEqual(actual, expected) {
+			t.Errorf("Expect %v, but %v", expected, actual)
+		}
+	}()
+
 	// SELECT "test_model".* FROM "test_model" LEFT JOIN "m2" ON "test_model"."name" = "m2"."body";
 	func() {
 		db := newTestDB(t)
@@ -826,7 +929,7 @@ func TestDB_Select_differentColumnName(t *testing.T) {
 		`INSERT INTO test_table VALUES (1)`,
 	} {
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}
 	var results []TestTable
@@ -860,7 +963,7 @@ func TestDB_Select_embeddedStruct(t *testing.T) {
 		`INSERT INTO b (id, name) VALUES (2, 'test2')`,
 	} {
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}
 
@@ -901,7 +1004,7 @@ func TestDB_CreateTable(t *testing.T) {
 			fmt.Sprintf(`INSERT INTO test_table (id, name, status, col) VALUES (2, 'test2', %s, 'col2');`, boolStr(false)),
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 		stmt, err := db.db.Prepare(`SELECT * FROM test_table`)
@@ -974,7 +1077,7 @@ func TestDB_CreateTable(t *testing.T) {
 			`INSERT INTO diff_table (id, name, addr) VALUES (2, 'diff_test2', 'diff_addr2');`,
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 		stmt, err := db.db.Prepare(`SELECT * FROM diff_table`)
@@ -1061,7 +1164,7 @@ func TestDB_CreateTable(t *testing.T) {
 			`DROP TABLE IF EXISTS b`,
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 		if err := db.CreateTable(&B{}); err != nil {
@@ -1099,7 +1202,7 @@ func TestDB_CreateTableIfNotExists(t *testing.T) {
 			fmt.Sprintf(`INSERT INTO test_table (id, name, status, col) VALUES (2, 'test2', %s, 'col2');`, boolStr(false)),
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 		stmt, err := db.db.Prepare(`SELECT * FROM test_table`)
@@ -1192,7 +1295,7 @@ func TestDB_CreateTableIfNotExists(t *testing.T) {
 			`DROP TABLE IF EXISTS b`,
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 		if err := db.CreateTableIfNotExists(&B{}); err != nil {
@@ -1219,7 +1322,7 @@ func TestDB_DropTable(t *testing.T) {
 		`CREATE TABLE test_table2 (id integer)`,
 	} {
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}
 	query := `SELECT COUNT(*) FROM test_table`
@@ -1251,7 +1354,7 @@ func TestDB_DropTable_withDifferentTableName(t *testing.T) {
 		`CREATE TABLE test_model_different_table (id integer)`,
 	} {
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}
 	query := `SELECT COUNT(*) FROM diff_table`
@@ -1285,7 +1388,7 @@ func TestDB_CreateIndex(t *testing.T) {
 		createTableString("test_table", "name varchar(255)"),
 	} {
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}
 
@@ -1301,7 +1404,7 @@ func TestDB_CreateIndex(t *testing.T) {
 			query = "DROP INDEX index_test_table_id"
 		}
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}()
 
@@ -1317,7 +1420,7 @@ func TestDB_CreateIndex(t *testing.T) {
 			query = "DROP INDEX index_test_table_id_name"
 		}
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}()
 }
@@ -1336,7 +1439,7 @@ func TestDB_CreateUniqueIndex(t *testing.T) {
 		createTableString("test_table", "name varchar(255)"),
 	} {
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}
 
@@ -1352,7 +1455,7 @@ func TestDB_CreateUniqueIndex(t *testing.T) {
 			query = "DROP INDEX index_test_table_id"
 		}
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}()
 
@@ -1368,7 +1471,7 @@ func TestDB_CreateUniqueIndex(t *testing.T) {
 			query = "DROP INDEX index_test_table_id_name"
 		}
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}()
 
@@ -1382,7 +1485,7 @@ func TestDB_CreateUniqueIndex(t *testing.T) {
 				query = "DROP INDEX index_test_table_name"
 			}
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}()
 		if err := db.CreateUniqueIndex(&TestTable{}, "name"); err != nil {
@@ -1390,7 +1493,7 @@ func TestDB_CreateUniqueIndex(t *testing.T) {
 		}
 		query := `INSERT INTO test_table (name) VALUES ('test1')`
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 		if _, err := db.db.Exec(query); err == nil {
 			t.Errorf("no error occurred")
@@ -1416,7 +1519,7 @@ func TestDB_Update(t *testing.T) {
 			fmt.Sprintf(`INSERT INTO test_table (id, name, active) VALUES (1, 'test1', %s);`, boolStr(true)),
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 		obj := &TestTable{
@@ -1461,7 +1564,7 @@ func TestDB_Update_withDifferentTableName(t *testing.T) {
 		`INSERT INTO diff_table (id, name, addr) VALUES (1, 'diff_test1', 'diff_addr1');`,
 	} {
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}
 	obj := &testModelDifferentTableName{
@@ -1505,7 +1608,7 @@ func TestDB_Update_withColumnTag(t *testing.T) {
 		fmt.Sprintf(`INSERT INTO test_table (id, mailaddress) VALUES (1, 'naoina@example.com');`),
 	} {
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}
 	type TestTable struct {
@@ -1567,7 +1670,7 @@ func TestDB_Update_withTransaction(t *testing.T) {
 		`INSERT INTO test_table VALUES (1, 'test')`,
 	} {
 		if _, err := db1.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}
 	if err := db1.Begin(); err != nil {
@@ -1618,7 +1721,7 @@ func TestDB_Update_hook(t *testing.T) {
 			`INSERT INTO test_model_for_hook (id, name) VALUES (1, 'alice');`,
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 	}
@@ -1715,7 +1818,7 @@ func TestDB_Insert(t *testing.T) {
 			createTableString("test_table", "name text"),
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 		obj := &TestTable{Id: 100, Name: "test1"}
@@ -1751,7 +1854,7 @@ func TestDB_Insert(t *testing.T) {
 			createTableString("diff_table", "name text", "addr text"),
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 		obj := &testModelDifferentTableName{
@@ -1792,7 +1895,7 @@ func TestDB_Insert(t *testing.T) {
 			createTableString("test_table", "name text"),
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 		obj := TestTable{Id: 100, Name: "test1"}
@@ -1813,7 +1916,7 @@ func TestDB_Insert(t *testing.T) {
 			createTableString("test_table", "name text"),
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 		n, err := db.Insert(objs)
@@ -1874,7 +1977,7 @@ func TestDB_Insert(t *testing.T) {
 			createTableStringForStringPk("test_table_string_pk", "name text"),
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 		obj := &TestTableStringPk{Id: "stringkey", Name: "test1"}
@@ -1905,7 +2008,7 @@ func TestDB_Insert_withColumnTab(t *testing.T) {
 		createTableString("test_table", "mailaddress text"),
 	} {
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}
 	type TestTable struct {
@@ -1948,7 +2051,7 @@ func TestDB_LastInsertId(t *testing.T) {
 		createTableString("test_table", "name text"),
 	} {
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}
 	for i := 1; i <= 3; i++ {
@@ -1979,7 +2082,7 @@ func TestDB_Insert_hook(t *testing.T) {
 			createTableString("test_model_for_hook", "name text"),
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 	}
@@ -2230,7 +2333,7 @@ func TestDB_Delete(t *testing.T) {
 			`INSERT INTO test_table (id, name) VALUES (2, 'test2')`,
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 		obj := &TestTable{Id: 1}
@@ -2277,7 +2380,7 @@ func TestDB_Delete(t *testing.T) {
 			`INSERT INTO test_table (id, name) VALUES (2, 'test2')`,
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 		obj := TestTable{Id: 1}
@@ -2300,7 +2403,7 @@ func TestDB_Delete(t *testing.T) {
 			`INSERT INTO diff_table (id, name, addr) VALUES (2, 'diff_test2', 'diff_addr2')`,
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 		obj := &testModelDifferentTableName{Id: 1}
@@ -2349,7 +2452,7 @@ func TestDB_Delete(t *testing.T) {
 			`INSERT INTO test_table (id, name) VALUES (3, 'test3')`,
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 		n, err := db.Delete(objs)
@@ -2398,7 +2501,7 @@ func TestDB_Delete_hook(t *testing.T) {
 			`INSERT INTO test_model_for_hook (id, name) VALUES (2, 'bob')`,
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 	}
@@ -2644,7 +2747,7 @@ func TestDB_SetLogOutput(t *testing.T) {
 		createTableString("test_table", "name text"),
 	} {
 		if _, err := db.db.Exec(query); err != nil {
-			t.Fatal(err)
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
 		}
 	}
 	// test for update-type query.
@@ -2727,7 +2830,7 @@ func TestDB_SetLogFormat(t *testing.T) {
 			createTableString("test_table", "name text"),
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 		// test for update-type query.
@@ -2797,7 +2900,7 @@ func TestEmbeddedStructHooks(t *testing.T) {
 			createTableString("test_embedded_model_for_hook", "name text"),
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 
@@ -2856,7 +2959,7 @@ func TestEmbeddedStructHooks(t *testing.T) {
 			createTableString("test_unexported_embedded_model_for_hook", "name text"),
 		} {
 			if _, err := db.db.Exec(query); err != nil {
-				t.Fatal(err)
+				t.Fatal(fmt.Errorf("%v: %s", err, query))
 			}
 		}
 
