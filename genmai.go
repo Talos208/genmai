@@ -7,6 +7,7 @@ package genmai
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"reflect"
@@ -18,6 +19,8 @@ import (
 
 	"github.com/naoina/go-stringutil"
 )
+
+var ErrTxDone = errors.New("genmai: transaction hasn't been started or already committed or rolled back")
 
 // DB represents a database object.
 type DB struct {
@@ -100,7 +103,13 @@ func (db *DB) Select(output interface{}, args ...interface{}) (err error) {
 		queries = append(queries, q...)
 		values = append(values, a...)
 	}
-	rows, err := db.query(strings.Join(queries, " "), values...)
+	query := strings.Join(queries, " ")
+	stmt, err := db.prepare(query, values...)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	rows, err := stmt.Query(values...)
 	if err != nil {
 		return err
 	}
@@ -208,7 +217,12 @@ func (db *DB) createTable(table interface{}, ifNotExists bool) error {
 		query = "CREATE TABLE %s (%s)"
 	}
 	query = fmt.Sprintf(query, db.dialect.Quote(tableName), strings.Join(fields, ", "))
-	if _, err := db.exec(query); err != nil {
+	stmt, err := db.prepare(query)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	if _, err := stmt.Exec(); err != nil {
 		return err
 	}
 	return nil
@@ -222,7 +236,12 @@ func (db *DB) DropTable(table interface{}) error {
 		return err
 	}
 	query := fmt.Sprintf("DROP TABLE %s", db.dialect.Quote(tableName))
-	if _, err = db.exec(query); err != nil {
+	stmt, err := db.prepare(query)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	if _, err = stmt.Exec(); err != nil {
 		return err
 	}
 	return nil
@@ -261,7 +280,12 @@ func (db *DB) createIndex(table interface{}, unique bool, name string, names ...
 		db.dialect.Quote(indexName),
 		db.dialect.Quote(tableName),
 		strings.Join(indexes, ", "))
-	if _, err := db.exec(query); err != nil {
+	stmt, err := db.prepare(query)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	if _, err := stmt.Exec(); err != nil {
 		return err
 	}
 	return nil
@@ -299,7 +323,12 @@ func (db *DB) Update(obj interface{}) (affected int64, err error) {
 		db.dialect.Quote(db.columnFromTag(rtype.FieldByIndex(pkIdx))),
 		db.dialect.PlaceHolder(len(fieldIndexes)))
 	args = append(args, rv.FieldByIndex(pkIdx).Interface())
-	result, err := db.exec(query, args...)
+	stmt, err := db.prepare(query, args...)
+	if err != nil {
+		return -1, err
+	}
+	defer stmt.Close()
+	result, err := stmt.Exec(args...)
 	if err != nil {
 		return -1, err
 	}
@@ -360,7 +389,12 @@ func (db *DB) Insert(obj interface{}) (affected int64, err error) {
 		strings.Join(cols, ", "),
 		strings.Join(values, ", "),
 	)
-	result, err := db.exec(query, args...)
+	stmt, err := db.prepare(query, args...)
+	if err != nil {
+		return -1, err
+	}
+	defer stmt.Close()
+	result, err := stmt.Exec(args...)
 	if err != nil {
 		return -1, err
 	}
@@ -427,7 +461,12 @@ func (db *DB) Delete(obj interface{}) (affected int64, err error) {
 		db.dialect.Quote(tableName),
 		db.dialect.Quote(db.columnFromTag(rtype.FieldByIndex(pkIdx))),
 		strings.Join(holders, ", "))
-	result, err := db.exec(query, args...)
+	stmt, err := db.prepare(query, args...)
+	if err != nil {
+		return -1, err
+	}
+	defer stmt.Close()
+	result, err := stmt.Exec(args...)
 	if err != nil {
 		return -1, err
 	}
@@ -455,30 +494,39 @@ func (db *DB) Begin() error {
 }
 
 // Commit commits the transaction.
+// If Begin still not called, or Commit or Rollback already called, Commit returns ErrTxDone.
 func (db *DB) Commit() error {
 	db.m.Lock()
 	defer db.m.Unlock()
+	if db.tx == nil {
+		return ErrTxDone
+	}
 	err := db.tx.Commit()
 	db.tx = nil
 	return err
 }
 
 // Rollback rollbacks the transaction.
+// If Begin still not called, or Commit or Rollback already called, Rollback returns ErrTxDone.
 func (db *DB) Rollback() error {
 	db.m.Lock()
 	defer db.m.Unlock()
+	if db.tx == nil {
+		return ErrTxDone
+	}
 	err := db.tx.Rollback()
 	db.tx = nil
 	return err
 }
 
 func (db *DB) LastInsertId() (int64, error) {
-	row, err := db.queryRow(db.dialect.LastInsertId())
+	stmt, err := db.prepare(db.dialect.LastInsertId())
 	if err != nil {
 		return 0, err
 	}
+	defer stmt.Close()
 	var id int64
-	return id, row.Scan(&id)
+	return id, stmt.QueryRow().Scan(&id)
 }
 
 // Raw returns a value that is wrapped with Raw.
@@ -902,37 +950,8 @@ func (db *DB) tableValueOf(name string, table interface{}) (rv reflect.Value, rt
 	return rv, rt, tableName, nil
 }
 
-func (db *DB) query(query string, args ...interface{}) (*sql.Rows, error) {
+func (db *DB) prepare(query string, args ...interface{}) (*sql.Stmt, error) {
 	defer db.logger.Print(now(), query, args...)
-	stmt, err := db.prepare(query)
-	if err != nil {
-		return nil, err
-	}
-	defer stmt.Close()
-	return stmt.Query(args...)
-}
-
-func (db *DB) queryRow(query string, args ...interface{}) (*sql.Row, error) {
-	defer db.logger.Print(now(), query, args...)
-	stmt, err := db.prepare(query)
-	if err != nil {
-		return nil, err
-	}
-	defer stmt.Close()
-	return stmt.QueryRow(args...), nil
-}
-
-func (db *DB) exec(query string, args ...interface{}) (sql.Result, error) {
-	defer db.logger.Print(now(), query, args...)
-	stmt, err := db.prepare(query)
-	if err != nil {
-		return nil, err
-	}
-	defer stmt.Close()
-	return stmt.Exec(args...)
-}
-
-func (db *DB) prepare(query string) (*sql.Stmt, error) {
 	db.m.Lock()
 	defer db.m.Unlock()
 	if db.tx == nil {
