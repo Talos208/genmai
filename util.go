@@ -19,14 +19,21 @@ func ToInterfaceSlice(slice []string) []interface{} {
 }
 
 // columnName returns the column name that added the table name with quoted if needed.
-func ColumnName(d Dialect, tname, cname string) string {
-	if cname != "*" {
-		cname = d.Quote(cname)
+func ColumnName(d Dialect, tname string, cname interface{}) string {
+	switch cname.(type) {
+	case OrderFunc:
+		return cname.(OrderFunc).String()
+	case string:
+		cn := cname.(string)
+		if cn != "*" {
+			cn = d.Quote(cn)
+		}
+		if tname == "" {
+			return cn
+		}
+		return fmt.Sprintf("%s.%s", d.Quote(tname), cn)
 	}
-	if tname == "" {
-		return cname
-	}
-	return fmt.Sprintf("%s.%s", d.Quote(tname), cname)
+	return ""
 }
 
 // IsUnexportedField returns whether the field is unexported.

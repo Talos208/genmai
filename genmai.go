@@ -181,8 +181,20 @@ func (db *DB) Count(column ...interface{}) *Function {
 	}
 }
 
-func (db *DB) Random() string {
-	return db.dialect.Random()
+type OrderFunc interface {
+    String() string
+}
+
+type OrderFuncImpl struct {
+    db *DB
+}
+
+func (ofi *OrderFuncImpl) String() string {
+    return ofi.db.dialect.Random()
+}
+
+func (db *DB) Random() OrderFunc {
+    return &OrderFuncImpl{db}
 }
 
 const (
@@ -1092,7 +1104,7 @@ var clauseStrings = []string{
 // column represents a column name in query.
 type column struct {
 	table string // table name (optional).
-	name  string // column name.
+	name  interface{} // column name.
 }
 
 // expr represents a expression in query.
@@ -1284,12 +1296,22 @@ func (c *Condition) appendQueryByCondOrExpr(name string, order int, clause Claus
 }
 
 func (c *Condition) orderBy(table, col, order interface{}) orderBy {
-	o := orderBy{
-		column: column{
-			name: fmt.Sprint(col),
-		},
-		order: Order(fmt.Sprint(order)),
-	}
+    var o orderBy
+    switch col.(type) {
+        case OrderFunc:
+        o = orderBy{
+            column: column{
+                name:  col,
+            },
+        }
+        default:
+        o = orderBy{
+            column: column{
+                name:  fmt.Sprint(col),
+            },
+        }
+    }
+   o.order = Order(fmt.Sprint(order))
 	if table != nil {
 		rt := reflect.TypeOf(table)
 		for rt.Kind() == reflect.Ptr {
