@@ -181,6 +181,10 @@ func (db *DB) Count(column ...interface{}) *Function {
 	}
 }
 
+func (db *DB) Random() string {
+	return db.dialect.Random()
+}
+
 const (
 	dbTag        = "db"
 	dbColumnTag  = "column"

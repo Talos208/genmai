@@ -435,6 +435,15 @@ func TestSQLite3Dialect_LastInsertID(t *testing.T) {
 	}
 }
 
+func TestSQLite3Dialect_Random(t *testing.T) {
+	d := &SQLite3Dialect{}
+	actual := d.Random()
+	expect := "random()"
+	if !reflect.DeepEqual(actual, expect) {
+		t.Errorf(`SQLite3Dialect.Random() => %#v; want %#v`, actual, expect)
+	}
+}
+
 func Test_MySQLDialect_Name(t *testing.T) {
 	d := &MySQLDialect{}
 	actual := d.Name()
@@ -1162,6 +1171,15 @@ func TestMySQLDialect_LastInsertID(t *testing.T) {
 	}
 }
 
+func TestMySQLDialect_Random(t *testing.T) {
+	d := &MySQLDialect{}
+	actual := d.Random()
+	expect := "RAND()"
+	if !reflect.DeepEqual(actual, expect) {
+		t.Errorf(`MySQLDialect.Random() => %#v; want %#v`, actual, expect)
+	}
+}
+
 func Test_PostgresDialect_Name(t *testing.T) {
 	d := &PostgresDialect{}
 	actual := d.Name()
@@ -1824,5 +1842,14 @@ func TestPostgresDialect_LastInsertID(t *testing.T) {
 	expect := "SELECT lastval()"
 	if !reflect.DeepEqual(actual, expect) {
 		t.Errorf(`PostgresDialect.LastInsertId() => %#v; want %#v`, actual, expect)
+	}
+}
+
+func TestPOstgresDialect_Random(t *testing.T) {
+	d := &PostgresDialect{}
+	actual := d.Random()
+	expect := "random()"
+	if !reflect.DeepEqual(actual, expect) {
+		t.Errorf(`PostgresDialect.Random() => %#v; want %#v`, actual, expect)
 	}
 }
