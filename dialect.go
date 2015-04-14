@@ -36,6 +36,9 @@ type Dialect interface {
 
 	// LastInsertId returns an SQL to get the last inserted id.
 	LastInsertId() string
+
+	// Random returns an SQL function to get random number which 0 <= v < 1.0
+	Random() string
 }
 
 var (
@@ -123,6 +126,10 @@ func (d *SQLite3Dialect) FormatBool(b bool) string {
 
 func (d *SQLite3Dialect) LastInsertId() string {
 	return `SELECT last_insert_rowid()`
+}
+
+func (d *SQLite3Dialect) Random() string {
+	return `random()`
 }
 
 // MySQLDialect represents a dialect of the MySQL.
@@ -228,6 +235,9 @@ func (d *MySQLDialect) varchar(size uint64) string {
 	return "LONGTEXT"
 }
 
+func (d *MySQLDialect) Random() string {
+	return `RAND()`
+}
 // PostgresDialect represents a dialect of the PostgreSQL.
 // It implements the Dialect interface.
 type PostgresDialect struct{}
@@ -337,4 +347,8 @@ func (d *PostgresDialect) varchar(size uint64) string {
 		return fmt.Sprintf("varchar(%d)", size)
 	}
 	return "text"
+}
+
+func (d *PostgresDialect) Random() string {
+	return `random()`
 }
