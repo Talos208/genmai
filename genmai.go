@@ -182,19 +182,19 @@ func (db *DB) Count(column ...interface{}) *Function {
 }
 
 type OrderFunc interface {
-    String() string
+	String() string
 }
 
 type OrderFuncImpl struct {
-    db *DB
+	db *DB
 }
 
 func (ofi *OrderFuncImpl) String() string {
-    return ofi.db.dialect.Random()
+	return ofi.db.dialect.Random()
 }
 
 func (db *DB) Random() OrderFunc {
-    return &OrderFuncImpl{db}
+	return &OrderFuncImpl{db}
 }
 
 const (
