@@ -181,8 +181,20 @@ func (db *DB) Count(column ...interface{}) *Function {
 	}
 }
 
-func (db *DB) Random() string {
-	return db.dialect.Random()
+type OrderFunc interface {
+	String() string
+}
+
+type OrderFuncImpl struct {
+	db *DB
+}
+
+func (ofi *OrderFuncImpl) String() string {
+	return ofi.db.dialect.Random()
+}
+
+func (db *DB) Random() OrderFunc {
+	return &OrderFuncImpl{db}
 }
 
 const (
@@ -1092,7 +1104,7 @@ var clauseStrings = []string{
 // column represents a column name in query.
 type column struct {
 	table string // table name (optional).
-	name  string // column name.
+	name  interface{} // column name.
 }
 
 // expr represents a expression in query.
@@ -1184,13 +1196,24 @@ func (c *Condition) OrderBy(table interface{}, col interface{}, order ...interfa
 	default:
 		panic(fmt.Errorf("OrderBy: a number of arguments of order must be 0 or 1, got %v", len(order)))
 	}
-	return c.appendQuery(300, OrderBy, &orderBy{
-		column: column{
-			table: tbl,
-			name:  fmt.Sprint(col),
-		},
-		order: Order(fmt.Sprint(o)),
-	})
+	switch col.(type) {
+	case OrderFunc:
+		return c.appendQuery(300, OrderBy, &orderBy{
+			column: column{
+				table: tbl,
+				name:  col,
+			},
+			order: Order(fmt.Sprint(o)),
+		})
+	default:
+		return c.appendQuery(300, OrderBy, &orderBy{
+			column: column{
+				table: tbl,
+				name:  fmt.Sprint(col),
+			},
+			order: Order(fmt.Sprint(o)),
+		})
+	}
 }
 
 // Limit adds "LIMIT" clause to the Condition and returns it for method chain.
