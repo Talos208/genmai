@@ -24,6 +24,9 @@ type logger interface {
 
 	// SetFormat sets the format for logging.
 	SetFormat(format string) error
+
+	// SetSlowTime sets slow query threshold.
+	SetSlowTime(slow float64) error
 }
 
 // templateLogger is a logger that Go's template to be used as a format.
@@ -32,6 +35,7 @@ type templateLogger struct {
 	w io.Writer
 	t *template.Template
 	m sync.Mutex
+	s float64
 }
 
 // SetFormat sets the format for logging.
@@ -43,6 +47,11 @@ func (l *templateLogger) SetFormat(format string) error {
 		return err
 	}
 	l.t = t
+	return nil
+}
+
+func (l *templateLogger) SetSlowTime(slow float64) error {
+	l.s = slow
 	return nil
 }
 
@@ -58,19 +67,22 @@ func (l *templateLogger) Print(start time.Time, query string, args ...interface{
 	} else {
 		query = fmt.Sprintf("%s;", query)
 	}
-	data := map[string]interface{}{
-		"time":     start,
-		"duration": fmt.Sprintf("%.2fms", now().Sub(start).Seconds()*float64(time.Microsecond)),
-		"query":    query,
-	}
-	var buf bytes.Buffer
-	if err := l.t.Execute(&buf, data); err != nil {
-		return err
-	}
-	l.m.Lock()
-	defer l.m.Unlock()
-	if _, err := fmt.Fprintln(l.w, strings.TrimSuffix(buf.String(), "\n")); err != nil {
-		return err
+	duration := now().Sub(start).Seconds()*float64(time.Microsecond)
+	if l.s <= 0.0 || duration >=l.s {
+		data := map[string]interface{}{
+			"time":     start,
+			"duration": fmt.Sprintf("%.2fms", duration),
+			"query":    query,
+		}
+		var buf bytes.Buffer
+		if err := l.t.Execute(&buf, data); err != nil {
+			return err
+		}
+		l.m.Lock()
+		defer l.m.Unlock()
+		if _, err := fmt.Fprintln(l.w, strings.TrimSuffix(buf.String(), "\n")); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -81,6 +93,10 @@ type nullLogger struct{}
 
 // SetFormat is a dummy method.
 func (l *nullLogger) SetFormat(format string) error {
+	return nil
+}
+
+func (l *nullLogger) SetSlowTime(slow float64) error {
 	return nil
 }
 
