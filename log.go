@@ -8,6 +8,7 @@ import (
 	"sync"
 	"text/template"
 	"time"
+	"regexp"
 )
 
 const defaultLoggingFormat = `[{{.time.Format "2006-01-02 15:04:05"}}] [{{.duration}}] {{.query}}`
@@ -55,13 +56,85 @@ func (l *templateLogger) SetSlowTime(slow float64) error {
 	return nil
 }
 
+var maskColumn []string
+
+func (l *templateLogger) AddColumnMask(mask string) {
+	maskColumn = append(maskColumn, mask)
+}
+
+func (l *templateLogger) RemoveColumnMask(mask string) {
+	for i, v := range(maskColumn) {
+		if v == mask {
+			maskColumn = append(maskColumn[:i], maskColumn[i + 1:]...)
+			return
+		}
+	}
+}
+
+var (
+	splitWhereRegex = regexp.MustCompile("WHERE")
+	updateRegex = regexp.MustCompile(`UPDATE.*SET\s*(.*)`)
+	updateParamRegex = regexp.MustCompile("`(\\w+?)`\\s*=\\s*\\?")
+	insertRegex = regexp.MustCompile(`INSERT.*\((.+?)\)\s*VALUES`)
+	insertParamRegex = regexp.MustCompile("`(\\w+?)`")
+	whereRegex = regexp.MustCompile("`(\\w+?)`\\s*(?:=\\s*(\\?)|IN\\s*\\(([\\?\\s,]+)\\))")
+)
+
+func toMaskColumn(sql string) []int {
+	// Gather target columns from
+	s2 := splitWhereRegex.Split(string(sql),-1)
+
+	var cols []string
+	su := updateRegex.FindSubmatch([]byte(s2[0]))
+	if len(su) > 1 {
+		for _, v := range(updateParamRegex.FindAllSubmatch(su[1], -1)) {
+			cols = append(cols, string(v[1]))
+		}
+	} else if si :=insertRegex.FindSubmatch([]byte(s2[0])); len(si) > 1 {
+		for _,v := range(insertParamRegex.FindAllSubmatch(si[1], -1)) {
+			cols = append(cols, string(v[1]))
+		}
+	}
+	if len(s2) > 1 {
+		sw := whereRegex.FindAllSubmatch([]byte(s2[1]), -1)
+		for _, v := range(sw) {
+			cnt := 0
+			for _, w := range(v[2:]) {
+				cnt += bytes.Count(w, []byte{'?'})
+			}
+			for i := 0;i < cnt;i++ {
+				cols = append(cols, string(v[1]))
+			}
+		}
+	}
+
+	to_mask := []int{}
+	for i, c := range(cols) {
+		for _, m := range(maskColumn) {
+			if c == m {
+				to_mask = append(to_mask, i)
+				break
+			}
+		}
+	}
+
+	return to_mask
+}
+
 // Print outputs query log using format template.
 // All arguments will be used to formatting.
 func (l *templateLogger) Print(start time.Time, query string, args ...interface{}) error {
 	if len(args) > 0 {
+		// Mask
+		to_mask := toMaskColumn(query)
 		values := make([]string, len(args))
 		for i, arg := range args {
-			values[i] = fmt.Sprintf("%#v", arg)
+			if len(to_mask) > 0 && to_mask[0] == i {
+				values[i] = "* SECRET *"
+				to_mask = to_mask[1:]
+			} else {
+				values[i] = fmt.Sprintf("%#v", arg)
+			}
 		}
 		query = fmt.Sprintf("%v; [%v]", query, strings.Join(values, ", "))
 	} else {
