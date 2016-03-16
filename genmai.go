@@ -40,6 +40,7 @@ type DB struct {
 	state   dbState
 	m       sync.Mutex
 	logger  logger
+	avoidPrepStmt   bool
 }
 
 // New returns a new DB.
@@ -244,15 +245,13 @@ func (db *DB) createTable(table interface{}, ifNotExists bool) error {
 		query = "CREATE TABLE %s (%s)"
 	}
 	query = fmt.Sprintf(query, db.dialect.Quote(tableName), strings.Join(fields, ", "))
-	stmt, err := db.prepare(query)
-	if err != nil {
-		return err
+	db.prepare(query)
+	if db.tx == nil {
+		_, err = db.db.Exec(query)
+	} else {
+		_, err = db.tx.Exec(query)
 	}
-	defer stmt.Close()
-	if _, err := stmt.Exec(); err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 // DropTable removes the table from database.
@@ -263,15 +262,13 @@ func (db *DB) DropTable(table interface{}) error {
 		return err
 	}
 	query := fmt.Sprintf("DROP TABLE %s", db.dialect.Quote(tableName))
-	stmt, err := db.prepare(query)
-	if err != nil {
-		return err
+	db.prepare(query)
+	if db.tx == nil {
+		_, err = db.db.Exec(query)
+	} else {
+		_, err = db.tx.Exec(query)
 	}
-	defer stmt.Close()
-	if _, err = stmt.Exec(); err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 // CreateIndex creates the index into database.
@@ -309,8 +306,8 @@ func (db *DB) createIndex(table interface{}, unique bool, name string, names ...
 		strings.Join(indexes, ", "))
 	stmt, err := db.prepare(query)
 	if err != nil {
-		return err
-	}
+	return err
+}
 	defer stmt.Close()
 	if _, err := stmt.Exec(); err != nil {
 		return err
@@ -1038,14 +1035,74 @@ func (db *DB) tableValueOf(name string, table interface{}) (rv reflect.Value, rt
 	return rv, rt, tableName, nil
 }
 
-func (db *DB) prepare(query string, args ...interface{}) (*sql.Stmt, error) {
+// psuedoStmt emulates sql.Stmt to switch use prepared statement or not.
+type psuedoStmt interface {
+	Exec(args ...interface{}) (sql.Result, error)
+	Query(args ...interface{}) (*sql.Rows, error)
+	QueryRow(args ...interface{}) *sql.Row
+	Close() error
+}
+
+// Psuedo sql.Stmt that uses prepared statement.
+type prepedStmt struct {
+	*sql.Stmt
+}
+
+// Psuedo sql.Stmt that doesn't uses prepared statement.
+type noPrepStmt struct {
+	Db  *DB
+	QueryStr string
+}
+
+func (ds noPrepStmt) Close() error {
+	if ds.Db.tx != nil {
+		ds.Db.Rollback()
+	}
+	return nil
+}
+
+func (ds noPrepStmt) Exec(args ...interface{}) (sql.Result, error) {
+	if ds.Db.tx == nil {
+		return ds.Db.db.Exec(ds.QueryStr, args...)
+	} else {
+		return ds.Db.tx.Exec(ds.QueryStr, args...)
+	}
+}
+
+func (ds noPrepStmt) Query(args ...interface{}) (*sql.Rows, error) {
+	if ds.Db.tx == nil {
+		return ds.Db.db.Query(ds.QueryStr, args...)
+	} else {
+		return ds.Db.tx.Query(ds.QueryStr, args...)
+	}
+}
+
+func (ds noPrepStmt) QueryRow(args ...interface{}) *sql.Row {
+	if ds.Db.tx == nil {
+		return ds.Db.db.QueryRow(ds.QueryStr, args...)
+	} else {
+		return ds.Db.tx.QueryRow(ds.QueryStr, args...)
+	}
+}
+
+func (db *DB) SetUsePreparedStatement(use bool) {
+	db.avoidPrepStmt = !use
+}
+
+func (db *DB) prepare(query string, args ...interface{}) (psuedoStmt, error) {
 	defer db.logger.Print(now(), query, args...)
 	db.m.Lock()
 	defer db.m.Unlock()
-	if db.tx == nil {
-		return db.db.Prepare(query)
+	if db.avoidPrepStmt {
+		return &noPrepStmt{Db: db, QueryStr:query}, nil
 	} else {
-		return db.tx.Prepare(query)
+		if db.tx == nil {
+			s, err := db.db.Prepare(query)
+			return prepedStmt{s}, err
+		} else {
+			s, err := db.tx.Prepare(query)
+			return prepedStmt{s}, err
+		}
 	}
 }
 
