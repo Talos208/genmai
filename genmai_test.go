@@ -1784,6 +1784,225 @@ func TestDB_Update_withTransaction(t *testing.T) {
 	}
 }
 
+func TestDB_Update_withNestedTransaction(t *testing.T) {
+	dbName := "go_test.db"
+	dir, err := ioutil.TempDir("", "TestDB_Update_withNestedTransaction")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(dir, dbName)
+	defer os.RemoveAll(dir)
+	db1, err := testDB(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type TestTable struct {
+		Id   int64 `db:"pk"`
+		Name string
+	}
+	for _, query := range []string{
+		`DROP TABLE IF EXISTS test_table`,
+		createTableString("test_table", "name text"),
+		`INSERT INTO test_table VALUES (1, 'test')`,
+		`INSERT INTO test_table VALUES (2, 'test')`,
+	} {
+		if _, err := db1.db.Exec(query); err != nil {
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
+		}
+	}
+	if err := db1.Begin(); err != nil {
+		t.Fatal(err)
+	}
+	obj := &TestTable{Id: 1, Name: "level 1"}
+	if _, err := db1.Update(obj);err != nil {
+		t.Fatal(err)
+	}
+	if err := db1.Begin(); err != nil {
+		t.Fatal(err)
+	}
+	obj2 := &TestTable{Id: 2, Name: "level 2"}
+	if _, err := db1.Update(obj2); err != nil {
+		t.Fatal(err)
+	}
+	if err := db1.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db1.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	dtmp, err := testDB(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := dtmp.db.Query(`SELECT * FROM test_table`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var actual []interface{}
+	expected := []interface{}{
+		[]interface{}{int64(1), "level 1"},
+		[]interface{}{int64(2), "level 2"},
+	}
+	for i := 0; rows.Next(); i++ {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			t.Fatal(err)
+		}
+		actual = append(actual, []interface{}{id, name})
+	}
+	if !reflect.DeepEqual(actual, expected) {
+		t.Errorf("Expect %#v, but %#v", expected, actual)
+	}
+}
+
+func TestDB_Rollback_withNestedTransaction(t *testing.T) {
+	dbName := "go_test.db"
+	dir, err := ioutil.TempDir("", "TestDB_Update_withNestedTransaction")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(dir, dbName)
+	defer os.RemoveAll(dir)
+	db1, err := testDB(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type TestTable struct {
+		Id   int64 `db:"pk"`
+		Name string
+	}
+	for _, query := range []string{
+		`DROP TABLE IF EXISTS test_table`,
+		createTableString("test_table", "name text"),
+		`INSERT INTO test_table VALUES (1, 'test')`,
+		`INSERT INTO test_table VALUES (2, 'test')`,
+	} {
+		if _, err := db1.db.Exec(query); err != nil {
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
+		}
+	}
+	if err := db1.Begin(); err != nil {
+		t.Fatal(err)
+	}
+	obj := &TestTable{Id: 1, Name: "level 1"}
+	if _, err := db1.Update(obj);err != nil {
+		t.Fatal(err)
+	}
+	if err := db1.Begin(); err != nil {
+		t.Fatal(err)
+	}
+	obj2 := &TestTable{Id: 2, Name: "level 2"}
+	if _, err := db1.Update(obj2); err != nil {
+		t.Fatal(err)
+	}
+	if err := db1.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db1.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	dtmp, err := testDB(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := dtmp.db.Query(`SELECT * FROM test_table`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var actual []interface{}
+	expected := []interface{}{
+		[]interface{}{int64(1), "test"},
+		[]interface{}{int64(2), "test"},
+	}
+	for i := 0; rows.Next(); i++ {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			t.Fatal(err)
+		}
+		actual = append(actual, []interface{}{id, name})
+	}
+	if !reflect.DeepEqual(actual, expected) {
+		t.Errorf("Expect %#v, but %#v", expected, actual)
+	}
+}
+
+func TestDB_Rollback_withNestedTransaction2(t *testing.T) {
+	dbName := "go_test.db"
+	dir, err := ioutil.TempDir("", "TestDB_Update_withNestedTransaction")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(dir, dbName)
+	defer os.RemoveAll(dir)
+	db1, err := testDB(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type TestTable struct {
+		Id   int64 `db:"pk"`
+		Name string
+	}
+	for _, query := range []string{
+		`DROP TABLE IF EXISTS test_table`,
+		createTableString("test_table", "name text"),
+		`INSERT INTO test_table VALUES (1, 'test')`,
+		`INSERT INTO test_table VALUES (2, 'test')`,
+	} {
+		if _, err := db1.db.Exec(query); err != nil {
+			t.Fatal(fmt.Errorf("%v: %s", err, query))
+		}
+	}
+	if err := db1.Begin(); err != nil {
+		t.Fatal(err)
+	}
+	obj := &TestTable{Id: 1, Name: "level 1"}
+	if _, err := db1.Update(obj);err != nil {
+		t.Fatal(err)
+	}
+	if err := db1.Begin(); err != nil {
+		t.Fatal(err)
+	}
+	obj2 := &TestTable{Id: 2, Name: "level 2"}
+	if _, err := db1.Update(obj2); err != nil {
+		t.Fatal(err)
+	}
+	if err := db1.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db1.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+
+	dtmp, err := testDB(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := dtmp.db.Query(`SELECT * FROM test_table`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var actual []interface{}
+	expected := []interface{}{
+		[]interface{}{int64(1), "test"},
+		[]interface{}{int64(2), "test"},
+	}
+	for i := 0; rows.Next(); i++ {
+		var id int64
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			t.Fatal(err)
+		}
+		actual = append(actual, []interface{}{id, name})
+	}
+	if !reflect.DeepEqual(actual, expected) {
+		t.Errorf("Expect %#v, but %#v", expected, actual)
+	}
+}
+
 func TestDB_Update_hook(t *testing.T) {
 	db, err := testDB()
 	if err != nil {

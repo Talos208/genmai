@@ -23,10 +23,21 @@ import (
 var ErrTxDone = errors.New("genmai: transaction hasn't been started or already committed or rolled back")
 
 // DB represents a database object.
+type dbState uint8
+
+const (
+	nORMAL dbState = iota
+	tRANSACTION
+	dEEP_TRANSANCTION
+	rOLLBACKING
+)
+
 type DB struct {
 	db      *sql.DB
 	dialect Dialect
 	tx      *sql.Tx
+	txLvl   int
+	state   dbState
 	m       sync.Mutex
 	logger  logger
 }
@@ -499,39 +510,84 @@ func (db *DB) Delete(obj interface{}) (affected int64, err error) {
 
 // Begin starts a transaction.
 func (db *DB) Begin() error {
-	tx, err := db.db.Begin()
-	if err != nil {
-		return err
-	}
 	db.m.Lock()
 	defer db.m.Unlock()
-	db.tx = tx
+	switch db.state {
+	case nORMAL:
+		tx, err := db.db.Begin()
+		if err != nil {
+			return err
+		}
+		db.tx = tx
+		db.state = tRANSACTION
+	case tRANSACTION:
+		db.state = dEEP_TRANSANCTION
+	default:
+	}
+	db.txLvl += 1
 	return nil
 }
 
 // Commit commits the transaction.
 // If Begin still not called, or Commit or Rollback already called, Commit returns ErrTxDone.
-func (db *DB) Commit() error {
+func (db *DB) Commit() (err error) {
 	db.m.Lock()
 	defer db.m.Unlock()
-	if db.tx == nil {
+	switch db.state {
+	case nORMAL:
 		return ErrTxDone
+	case tRANSACTION:
+		db.txLvl = 0
+		db.state = nORMAL
+		if db.tx == nil {
+			return ErrTxDone
+		}
+		err = db.tx.Commit()
+		db.tx = nil
+	case dEEP_TRANSANCTION:
+		if db.txLvl -= 1; db.txLvl <= 1 {
+			db.state = tRANSACTION
+		}
+		err = nil
+	case rOLLBACKING:
+		if db.txLvl -= 1; db.txLvl <= 0 {
+			db.state = nORMAL
+		}
+		err = nil
 	}
-	err := db.tx.Commit()
-	db.tx = nil
 	return err
 }
 
 // Rollback rollbacks the transaction.
 // If Begin still not called, or Commit or Rollback already called, Rollback returns ErrTxDone.
-func (db *DB) Rollback() error {
+func (db *DB) Rollback() (err error) {
 	db.m.Lock()
 	defer db.m.Unlock()
-	if db.tx == nil {
+	switch db.state {
+	case nORMAL:
 		return ErrTxDone
+	case tRANSACTION:
+		db.txLvl = 0
+		db.state = nORMAL
+		if db.tx == nil {
+			return ErrTxDone
+		}
+		err = db.tx.Rollback()
+		db.tx = nil
+	case dEEP_TRANSANCTION:
+		db.txLvl -= 1
+		db.state = rOLLBACKING
+		if db.tx == nil {
+			return ErrTxDone
+		}
+		err = db.tx.Rollback()
+		db.tx = nil
+	case rOLLBACKING:
+		if db.txLvl -= 1; db.txLvl <= 0 {
+			db.state = nORMAL
+		}
+		err = nil
 	}
-	err := db.tx.Rollback()
-	db.tx = nil
 	return err
 }
 
