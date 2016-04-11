@@ -1055,22 +1055,7 @@ type noPrepStmt struct {
 }
 
 func (ds noPrepStmt) Close() error {
-	ds.Db.m.Lock()
-	defer ds.Db.m.Unlock()
-	switch ds.Db.state {
-	case tRANSACTION, dEEP_TRANSANCTION:
-		if ds.Db.tx != nil {
-			if err := ds.Db.tx.Commit();err != nil {
-				return err
-			}
-		}
-		fallthrough
-	case rOLLBACKING:
-		ds.Db.tx = nil
-		ds.Db.state = nORMAL
-		ds.Db.txLvl = 0
-	case nORMAL:
-	}
+	// Do nothing.
 	return nil
 }
 
