@@ -306,8 +306,8 @@ func (db *DB) createIndex(table interface{}, unique bool, name string, names ...
 		strings.Join(indexes, ", "))
 	stmt, err := db.prepare(query)
 	if err != nil {
-	return err
-}
+		return err
+	}
 	defer stmt.Close()
 	if _, err := stmt.Exec(); err != nil {
 		return err
@@ -749,15 +749,15 @@ func (db *DB) classify(tableName string, args []interface{}) (column, from strin
 	}
 	offset := 1
 	switch t := args[0].(type) {
-		case string:
+	case string:
 		if t != "" {
 			column = ColumnName(db.dialect, tableName, t)
 		}
-		case []string:
+	case []string:
 		column = db.columns(tableName, ToInterfaceSlice(t))
-		case *Distinct:
+	case *Distinct:
 		column = fmt.Sprintf("DISTINCT %s", db.columns(tableName, ToInterfaceSlice(t.columns)))
-		case *Function:
+	case *Function:
 		var col string
 		if len(t.Args) == 0 {
 			col = "*"
@@ -765,21 +765,21 @@ func (db *DB) classify(tableName string, args []interface{}) (column, from strin
 			col = db.columns(tableName, t.Args)
 		}
 		column = fmt.Sprintf("%s(%s)", t.Name, col)
-		default:
+	default:
 		offset--
 	}
 	for i := offset; i < len(args); i++ {
 		switch t := args[i].(type) {
-			case *Condition:
+		case *Condition:
 			t.tableName = tableName
 			conditions = append(conditions, t)
-			case string, []string:
+		case string, []string:
 			return "", "", nil, fmt.Errorf("argument of %T type must be before the *Condition arguments", t)
-			case *From:
+		case *From:
 		// ignore.
-			case *Function:
+		case *Function:
 			return "", "", nil, fmt.Errorf("%s function must be specified to the first argument", t.Name)
-			default:
+		default:
 			return "", "", nil, fmt.Errorf("unsupported argument type: %T", t)
 		}
 	}
@@ -797,13 +797,13 @@ func (db *DB) columns(tableName string, columns []interface{}) string {
 	names := make([]string, len(columns))
 	for i, col := range columns {
 		switch c := col.(type) {
-			case Raw:
+		case Raw:
 			names[i] = fmt.Sprint(*c)
-			case string:
+		case string:
 			names[i] = ColumnName(db.dialect, tableName, c)
-			case *Distinct:
+		case *Distinct:
 			names[i] = fmt.Sprintf("DISTINCT %s", db.columns(tableName, ToInterfaceSlice(c.columns)))
-			default:
+		default:
 			panic(fmt.Errorf("column name must be string, Raw or *Distinct, got %T", c))
 		}
 	}
@@ -1055,8 +1055,21 @@ type noPrepStmt struct {
 }
 
 func (ds noPrepStmt) Close() error {
-	if ds.Db.tx != nil {
-		ds.Db.Rollback()
+	ds.Db.m.Lock()
+	defer ds.Db.m.Unlock()
+	switch ds.Db.state {
+	case tRANSACTION, dEEP_TRANSANCTION:
+		if ds.Db.tx != nil {
+			if err := ds.Db.tx.Commit();err != nil {
+				return err
+			}
+		}
+		fallthrough
+	case rOLLBACKING:
+		ds.Db.tx = nil
+		ds.Db.state = nORMAL
+		ds.Db.txLvl = 0
+	case nORMAL:
 	}
 	return nil
 }
@@ -1377,9 +1390,9 @@ func (c *Condition) appendQuery(priority int, clause Clause, expr interface{}, a
 
 func (c *Condition) appendQueryByCondOrExpr(name string, order int, clause Clause, cond interface{}, args ...interface{}) *Condition {
 	switch t := cond.(type) {
-		case string, *Condition:
+	case string, *Condition:
 		args = append([]interface{}{t}, args...)
-		default:
+	default:
 		v := reflect.Indirect(reflect.ValueOf(t))
 		if v.Kind() != reflect.Struct {
 			panic(fmt.Errorf("%s: first argument must be string or struct, got %T", name, t))
@@ -1389,11 +1402,11 @@ func (c *Condition) appendQueryByCondOrExpr(name string, order int, clause Claus
 	switch len(args) {
 	case 1: // Where(Where("id", "=", 1))
 		switch t := args[0].(type) {
-			case *Condition:
+		case *Condition:
 			cond = t
-			case string:
+		case string:
 			cond = &column{name: t}
-			default:
+		default:
 			panic(fmt.Errorf("%s: first argument must be string or *Condition if args not given, got %T", name, t))
 		}
 	case 2: // Where(&Table{}, "id")
@@ -1427,13 +1440,13 @@ func (c *Condition) appendQueryByCondOrExpr(name string, order int, clause Claus
 func (c *Condition) orderBy(table, col, order interface{}) orderBy {
 	var o orderBy
 	switch col.(type) {
-		case OrderFunc:
+	case OrderFunc:
 		o = orderBy{
 			column: column{
 				name:  col,
 			},
 		}
-		default:
+	default:
 		o = orderBy{
 			column: column{
 				name:  fmt.Sprint(col),
@@ -1458,12 +1471,12 @@ func (c *Condition) build(numHolders int, inner bool) (queries []string, args []
 			queries = append(queries, p.clause.String())
 		}
 		switch e := p.expr.(type) {
-			case *expr:
+		case *expr:
 			col := ColumnName(c.db.dialect, e.column.table, e.column.name)
 			queries = append(queries, col, e.op, c.db.dialect.PlaceHolder(numHolders))
 			args = append(args, e.value)
 			numHolders++
-			case []orderBy:
+		case []orderBy:
 			o := e[0]
 			queries = append(queries, ColumnName(c.db.dialect, o.column.table, o.column.name), o.order.String())
 			if len(e) > 1 {
@@ -1471,10 +1484,10 @@ func (c *Condition) build(numHolders int, inner bool) (queries []string, args []
 					queries = append(queries, ",", ColumnName(c.db.dialect, o.column.table, o.column.name), o.order.String())
 				}
 			}
-			case *column:
+		case *column:
 			col := ColumnName(c.db.dialect, e.table, e.name)
 			queries = append(queries, col)
-			case []interface{}:
+		case []interface{}:
 			e = flatten(e)
 			holders := make([]string, len(e))
 			for i := 0; i < len(e); i++ {
@@ -1483,15 +1496,15 @@ func (c *Condition) build(numHolders int, inner bool) (queries []string, args []
 			}
 			queries = append(queries, "(", strings.Join(holders, ", "), ")")
 			args = append(args, e...)
-			case *between:
+		case *between:
 			queries = append(queries, c.db.dialect.PlaceHolder(numHolders), "AND", c.db.dialect.PlaceHolder(numHolders+1))
 			args = append(args, e.from, e.to)
 			numHolders += 2
-			case *Condition:
+		case *Condition:
 			q, a := e.build(numHolders, true)
 			queries = append(append(append(queries, "("), q...), ")")
 			args = append(args, a...)
-			case *JoinCondition:
+		case *JoinCondition:
 			var leftTableName string
 			if e.leftTableName == "" {
 				leftTableName = c.tableName
@@ -1501,9 +1514,9 @@ func (c *Condition) build(numHolders int, inner bool) (queries []string, args []
 			queries = append(queries,
 				c.db.dialect.Quote(e.tableName), "ON",
 				ColumnName(c.db.dialect, leftTableName, e.left), e.op, ColumnName(c.db.dialect, e.tableName, e.right))
-			case nil:
+		case nil:
 		// ignore.
-			default:
+		default:
 			queries = append(queries, c.db.dialect.PlaceHolder(numHolders))
 			args = append(args, e)
 			numHolders++
