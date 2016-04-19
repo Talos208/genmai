@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/naoina/go-stringutil"
+	"time"
 )
 
 var ErrTxDone = errors.New("genmai: transaction hasn't been started or already committed or rolled back")
@@ -1045,13 +1046,33 @@ type psuedoStmt interface {
 
 // Psuedo sql.Stmt that uses prepared statement.
 type prepedStmt struct {
+	logger func(time.Time, string, ...interface{}) error
+	startTime   time.Time
+	query   *string
 	*sql.Stmt
 }
+
+func (ds prepedStmt) Exec(args ...interface{}) (sql.Result, error) {
+	defer ds.logger(ds.startTime, *ds.query, args...)
+	return ds.Stmt.Exec(args...)
+}
+
+func (ds prepedStmt) Query(args ...interface{}) (*sql.Rows, error) {
+	defer ds.logger(ds.startTime, *ds.query, args...)
+	return ds.Stmt.Query(args...)
+}
+
+func (ds prepedStmt) QueryRow(args ...interface{}) *sql.Row {
+	defer ds.logger(ds.startTime, *ds.query, args...)
+	return ds.Stmt.QueryRow(args...)
+}
+
 
 // Psuedo sql.Stmt that doesn't uses prepared statement.
 type noPrepStmt struct {
 	Db  *DB
 	QueryStr string
+	startTime   time.Time
 }
 
 func (ds noPrepStmt) Close() error {
@@ -1060,6 +1081,7 @@ func (ds noPrepStmt) Close() error {
 }
 
 func (ds noPrepStmt) Exec(args ...interface{}) (sql.Result, error) {
+	defer ds.Db.logger.Print(ds.startTime, ds.QueryStr, args...)
 	if ds.Db.tx == nil {
 		return ds.Db.db.Exec(ds.QueryStr, args...)
 	} else {
@@ -1068,6 +1090,7 @@ func (ds noPrepStmt) Exec(args ...interface{}) (sql.Result, error) {
 }
 
 func (ds noPrepStmt) Query(args ...interface{}) (*sql.Rows, error) {
+	defer ds.Db.logger.Print(ds.startTime, ds.QueryStr, args...)
 	if ds.Db.tx == nil {
 		return ds.Db.db.Query(ds.QueryStr, args...)
 	} else {
@@ -1076,6 +1099,7 @@ func (ds noPrepStmt) Query(args ...interface{}) (*sql.Rows, error) {
 }
 
 func (ds noPrepStmt) QueryRow(args ...interface{}) *sql.Row {
+	defer ds.Db.logger.Print(ds.startTime, ds.QueryStr, args...)
 	if ds.Db.tx == nil {
 		return ds.Db.db.QueryRow(ds.QueryStr, args...)
 	} else {
@@ -1088,19 +1112,20 @@ func (db *DB) SetUsePreparedStatement(use bool) {
 }
 
 func (db *DB) prepare(query string, args ...interface{}) (psuedoStmt, error) {
-	defer db.logger.Print(now(), query, args...)
 	db.m.Lock()
 	defer db.m.Unlock()
+	st := now()
 	if db.avoidPrepStmt {
-		return &noPrepStmt{Db: db, QueryStr:query}, nil
+		return &noPrepStmt{Db: db, QueryStr:query, startTime: st}, nil
 	} else {
+		var s *sql.Stmt
+		var err error
 		if db.tx == nil {
-			s, err := db.db.Prepare(query)
-			return prepedStmt{s}, err
+			s, err = db.db.Prepare(query)
 		} else {
-			s, err := db.tx.Prepare(query)
-			return prepedStmt{s}, err
+			s, err = db.tx.Prepare(query)
 		}
+		return prepedStmt{Stmt:s, startTime: st, query: &query, logger: db.logger.Print}, err
 	}
 }
 

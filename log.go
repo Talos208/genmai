@@ -143,7 +143,7 @@ func (l *templateLogger) Print(start time.Time, query string, args ...interface{
 	} else {
 		query = fmt.Sprintf("%s;", query)
 	}
-	duration := now().Sub(start).Seconds() * float64(time.Microsecond)
+	duration := now().Sub(start).Seconds() * 1000.0
 	if l.s <= 0.0 || duration >= l.s {
 		data := map[string]interface{}{
 			"time":     start,
