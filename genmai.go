@@ -36,6 +36,7 @@ const (
 type DB struct {
 	db      *sql.DB
 	dialect Dialect
+	dsn string
 	tx      *sql.Tx
 	txLvl   int
 	state   dbState
@@ -51,7 +52,25 @@ func New(dialect Dialect, dsn string) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &DB{db: db, dialect: dialect, logger: defaultLogger}, nil
+	return &DB{db: db, dialect: dialect, dsn: dsn, logger: defaultLogger}, nil
+}
+
+func (org *DB) Spawn() (*DB, error) {
+	if org == nil {
+		return nil, errors.New("Origin is nil")
+	}
+	db := org.DB()
+	if db == nil {
+		return nil, errors.New("Origin is nil")
+	}
+	if err := db.Ping(); err != nil {
+		org.db.Close()
+		org, err = New(org.dialect, org.dsn)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &DB{db: db, dialect: org.dialect, dsn: org.dsn, logger: defaultLogger}, nil
 }
 
 // Select fetch data into the output from the database.
@@ -606,7 +625,8 @@ func (db *DB) Raw(v interface{}) Raw {
 
 // Close closes the database.
 func (db *DB) Close() error {
-	return db.db.Close()
+	//	return db.db.Close()
+	return nil
 }
 
 // Quote returns a quoted s.
