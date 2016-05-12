@@ -1091,7 +1091,7 @@ func (ds prepedStmt) QueryRow(args ...interface{}) *sql.Row {
 // Psuedo sql.Stmt that doesn't uses prepared statement.
 type noPrepStmt struct {
 	Db  *DB
-	QueryStr string
+	QueryStr *string
 	startTime   time.Time
 }
 
@@ -1101,29 +1101,29 @@ func (ds noPrepStmt) Close() error {
 }
 
 func (ds noPrepStmt) Exec(args ...interface{}) (sql.Result, error) {
-	defer ds.Db.logger.Print(ds.startTime, ds.QueryStr, args...)
+	defer ds.Db.logger.Print(ds.startTime, *ds.QueryStr, args...)
 	if ds.Db.tx == nil {
-		return ds.Db.db.Exec(ds.QueryStr, args...)
+		return ds.Db.db.Exec(*ds.QueryStr, args...)
 	} else {
-		return ds.Db.tx.Exec(ds.QueryStr, args...)
+		return ds.Db.tx.Exec(*ds.QueryStr, args...)
 	}
 }
 
 func (ds noPrepStmt) Query(args ...interface{}) (*sql.Rows, error) {
-	defer ds.Db.logger.Print(ds.startTime, ds.QueryStr, args...)
+	defer ds.Db.logger.Print(ds.startTime, *ds.QueryStr, args...)
 	if ds.Db.tx == nil {
-		return ds.Db.db.Query(ds.QueryStr, args...)
+		return ds.Db.db.Query(*ds.QueryStr, args...)
 	} else {
-		return ds.Db.tx.Query(ds.QueryStr, args...)
+		return ds.Db.tx.Query(*ds.QueryStr, args...)
 	}
 }
 
 func (ds noPrepStmt) QueryRow(args ...interface{}) *sql.Row {
-	defer ds.Db.logger.Print(ds.startTime, ds.QueryStr, args...)
+	defer ds.Db.logger.Print(ds.startTime, *ds.QueryStr, args...)
 	if ds.Db.tx == nil {
-		return ds.Db.db.QueryRow(ds.QueryStr, args...)
+		return ds.Db.db.QueryRow(*ds.QueryStr, args...)
 	} else {
-		return ds.Db.tx.QueryRow(ds.QueryStr, args...)
+		return ds.Db.tx.QueryRow(*ds.QueryStr, args...)
 	}
 }
 
@@ -1136,7 +1136,7 @@ func (db *DB) prepare(query string, args ...interface{}) (psuedoStmt, error) {
 	defer db.m.Unlock()
 	st := now()
 	if db.avoidPrepStmt {
-		return &noPrepStmt{Db: db, QueryStr:query, startTime: st}, nil
+		return &noPrepStmt{Db: db, QueryStr:&query, startTime: st}, nil
 	} else {
 		var s *sql.Stmt
 		var err error
